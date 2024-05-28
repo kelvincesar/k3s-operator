@@ -10,7 +10,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .expect("Expected a valid KUBECONFIG environment variable.");
     let pods = get_pods(&client).await;
-    if pods.len() > 0 {
+    let nodes = get_nodes(&client).await;
+
+
+    println!("{:?}", nodes);
+    println!("{:?}", pods);
+    /*if pods.len() > 0 {
         // pod que queremos mover
         let pod_name = &pods[0];
         // namespace onde o pod está localizado
@@ -24,25 +29,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Criar um novo pod com node affinity
         create_pod_with_node_affinity(&client, namespace, &format!("novo-{}", &pod_name), target_node).await?;
     }
-    
+    */
 
     Ok(())
 }
 
-
-
-async fn get_pods(client: &Client) -> Vec<String> {
+#[derive(Debug)]
+struct Pods {
+   name: String,
+   id: String,
+}
+async fn get_pods(client: &Client) -> Vec<Pods> {
     let pods: Api<k8s_openapi::api::core::v1::Pod> = Api::namespaced(client.clone(), "default");
-    let mut pods_list: Vec<String> = Vec::with_capacity(10);
+    let mut pods_list: Vec<Pods> = Vec::with_capacity(10);
     match pods.list(&ListParams::default()).await {
         Ok(pods) => {
             for p in pods {
                 let name = p.metadata.name.unwrap();
                 let id = p.metadata.uid.unwrap();
-                println!("Pod: {} - {}", id, name);
-                pods_list.push(name.clone());
+                //println!("Pod: {} - {}", id, name);
+                pods_list.push(Pods { name: name.clone(), id });
 
-                list_pod_containers(&client, "default", &name).await;
+                if let Err(e) = list_pod_containers(&client, "default", &name).await {
+                    println!("Erro ao listar os containers do pod {}: {}", name, e);
+                }
                 
             }
         },
@@ -51,6 +61,30 @@ async fn get_pods(client: &Client) -> Vec<String> {
 
     pods_list
    
+}
+
+#[derive(Debug)]
+struct Nodes {
+    name: String,
+    id: String,
+}
+async fn get_nodes(client: &Client) -> Vec<Nodes> {
+    let nodes: Api<k8s_openapi::api::core::v1::Node> = Api::all(client.clone());
+    let mut nodes_list: Vec<Nodes> = Vec::with_capacity(10);
+    match nodes.list(&ListParams::default()).await {
+        Ok(nodes) => {
+            for n in nodes {
+                let name = n.metadata.name.unwrap();
+                let id = n.metadata.uid.unwrap();
+                //println!("Node: {} - {}", id, name);
+                nodes_list.push(Nodes { name: name.clone(), id });
+            }
+        },
+        _ => (),
+    };
+
+
+    nodes_list
 }
 
 async fn delete_pod(client: &Client, namespace: &str, pod_name: &str) -> Result<(), Box<dyn std::error::Error>> {
