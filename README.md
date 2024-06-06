@@ -16,3 +16,9 @@ sudo journalctl -u k3s-agent -f
 ## Fixes
 
 https://vinaysit.wordpress.com/2021/06/12/rancher-k3s-nameserver-limits-exceeded/
+
+
+## Verificar
+
+- Necessário sempre ter um master?
+- Otimização de carga computacional, energia, etc...
