@@ -2,75 +2,100 @@ use kube::{Client, api::{Api, DeleteParams, PostParams, ListParams}};
 use k8s_openapi::api::core::v1::{Pod, PodSpec, Container, Affinity, NodeAffinity, NodeSelector, NodeSelectorTerm, NodeSelectorRequirement};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use tokio;
+use clap::Parser;
 
+
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Nome do nó atual de onde o pod está sendo executado
+    #[arg(short, long)]
+    current_node: String,
+
+    /// Nome do nó destino para onde o pod será realocado
+    #[arg(short, long)]
+    target_node: String,
+}
+
+// export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+    let args = Args::parse();
+    let Args { current_node, target_node } = args;
+
     let client: Client = Client::try_default()
         .await
         .expect("Expected a valid KUBECONFIG environment variable.");
-    let pods = get_pods(&client).await;
-    let nodes = get_nodes(&client).await;
 
-    // nome do nó destino
-    let target_node = std::env::args().nth(1).expect("Expected a target node as argument.");
     // namespace onde o pod está localizado
     let namespace = "default";
+    
+    let nodes = get_nodes(&client).await;
+    let pods = get_pods(&client, &current_node).await;
 
     println!("{:?}", nodes);
-    println!("{:?}", pods);
+    println!("{} pods: {:?}", current_node, pods);
+
     if pods.len() > 0 {
         // pod que queremos mover
         let pod_name = &pods[0].name;
 
         // deletar o pod existente
         delete_pod(&client, namespace, &pod_name).await?;
-        
-        // Criar um novo pod com node affinity
-        create_pod_with_node_affinity(&client, namespace, &format!("novo-{}", &pod_name), &target_node).await?;
-        println!("Pod {} movido para o nó {}", pod_name, target_node);
 
+        // Criar um novo pod com node affinity
+        let new_name = new_pod_name(&pod_name, &current_node);
+        create_pod_with_node_affinity(&client, namespace, &new_name, &target_node).await?;
     } else {
         println!("Nenhum pod encontrado para mover.");
-
         let pod_name = "pod-teste";
-        // Criar um novo pod com node affinity
         create_pod_with_node_affinity(&client, namespace, pod_name, &target_node).await?;
     }
-
+    
     Ok(())
 }
 
+fn new_pod_name(current_name: &str, node: &str) -> String {
+    let name = current_name.strip_prefix("movido-").unwrap_or(current_name);
+    format!("movido-{}-{}", node, name)
+}
+
 #[derive(Debug)]
+#[allow(dead_code)]
 struct Pods {
    name: String,
    id: String,
 }
-async fn get_pods(client: &Client) -> Vec<Pods> {
-    let pods: Api<k8s_openapi::api::core::v1::Pod> = Api::namespaced(client.clone(), "default");
+async fn get_pods(client: &Client, node_name: &str) -> Vec<Pods> {
+    let pods: Api<Pod> = Api::namespaced(client.clone(), "default");
     let mut pods_list: Vec<Pods> = Vec::with_capacity(10);
-    match pods.list(&ListParams::default()).await {
-        Ok(pods) => {
-            for p in pods {
-                let name = p.metadata.name.unwrap();
-                let id = p.metadata.uid.unwrap();
-                //println!("Pod: {} - {}", id, name);
+
+    // ListParams com selector para filtrar por node
+    let lp = ListParams::default()
+        .fields(&format!("spec.nodeName={}", node_name));
+
+    match pods.list(&lp).await {
+        Ok(pod_list) => {
+            for p in pod_list.items {
+                let name = p.metadata.name.clone().unwrap();
+                let id = p.metadata.uid.clone().unwrap();
+                // println!("Pod: {} - {}", id, name);
                 pods_list.push(Pods { name: name.clone(), id });
 
                 if let Err(e) = list_pod_containers(&client, "default", &name).await {
                     println!("Erro ao listar os containers do pod {}: {}", name, e);
                 }
-                
             }
         },
-        _ => (),
+        Err(e) => println!("Erro ao listar os pods: {}", e),
     };
 
     pods_list
-   
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct Nodes {
     name: String,
     id: String,
@@ -119,7 +144,7 @@ async fn create_pod_with_node_affinity(client: &Client, namespace: &str, pod_nam
         spec: Some(PodSpec {
             containers: vec![Container {
                 name: "generated-container".to_string(),
-                image: Some("bashofmann/rancher-demo:1.1.0".to_string()),
+                image: Some("bashofmann/rancher-demo:1.0.0".to_string()),
                 ..Default::default()
             }],
             affinity: Some(Affinity {
@@ -164,15 +189,15 @@ async fn list_pod_containers(client: &Client, namespace: &str, pod_name: &str) -
             match pod.spec {
                 Some(spec) => {
                     for container in spec.containers {
-                        println!("\t* Container Name: {}", container.name);
-                        if let Some(image) = container.image {
-                            println!("\t* Image: {}", image);
+                        //println!("\t* Container Name: {}", container.name);
+                        if let Some(_image) = container.image {
+                            //println!("\t* Image: {}", image);
                         }
-                        if let Some(command) = container.command {
-                            println!("\t* Command: {:?}", command);
+                        if let Some(_command) = container.command {
+                            //println!("\t* Command: {:?}", command);
                         }
-                        if let Some(args) = container.args {
-                            println!("\t* Args: {:?}", args);
+                        if let Some(_args) = container.args {
+                            //println!("\t* Args: {:?}", args);
                         }
                     }
                 }
